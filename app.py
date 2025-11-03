@@ -750,6 +750,7 @@ def ui_param_selection(state: AppState) -> AppState:
                         target_col=state.target_col,
                         params=p,
                         feature_cols=state.feature_cols,
+                        split_ratio=split_ratio,
                     )
                     if res:
                         state.results.setdefault(method, []).append(res)  
@@ -769,6 +770,7 @@ def ui_param_selection(state: AppState) -> AppState:
                     target_col=state.target_col,
                     params=p,
                     feature_cols=state.feature_cols,
+                    split_ratio=split_ratio,
                 )
                 if res:
                     state.results.setdefault(method, []).append(res)  
