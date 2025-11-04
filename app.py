@@ -116,9 +116,9 @@ def ui_data_upload(state: AppState) -> AppState:
             return state
         
         # --- canonical time feature creation ---
-        if "time_feature" in df.columns:
-            df.rename(columns={"time_feature": "time_feature_original"}, inplace=True)
-        df["time_feature"] = np.arange(len(df), dtype=int)
+        if "row_index" in df.columns:
+            df.rename(columns={"row_index": "row_index_original"}, inplace=True)
+        df["row_index"] = np.arange(len(df), dtype=int)
 
         # --- preview ---
         with st.expander("Show data preview"):
@@ -148,12 +148,17 @@ def ui_data_upload(state: AppState) -> AppState:
 
         if potential_features:
             state.feature_cols = st.multiselect(
-                "Additional features (applied to all ML models)",
+                "Feature columns (inputs)",
                 options=potential_features,
                 default=[f for f in prev_selection if f in potential_features],
-                help="Used by ML methods (e.g., Regression Tree, XGBoost).",
+                help="Used by those methods that forecast based on feature (e.g., Lin. Regression," \
+                    " Regression Tree, XGBoost). " 
+                    " Note ℹ️ The `row_index` column is auto-generated. "
+                    "It represents the sort order of the dataset and can serve as  "
+                    "time indicator when no explicit date or time column exists.",
                 key="feature_cols_selector",
             )
+            
         else:
             st.info("No additional feature columns available.")
             state.feature_cols = []
@@ -583,7 +588,7 @@ def run_model(
     if split_ratio is None:
         split_ratio = DEFAULT_PARAMS["GLOBAL"]["train_split_ratio"]
 
-    effective_features = feature_cols if feature_cols else ["time_feature"]
+    effective_features = feature_cols if feature_cols else ["row_index"]
 
     if method_name in ["SES", "DES", "TES"]:
         return run_exp_smoothing_family(
@@ -726,9 +731,9 @@ def ui_param_selection(state: AppState) -> AppState:
                     )
             if method == "Regression Tree":
                 p["show_tree"] = st.checkbox(
-                    "Show decision tree after training",
+                    "Show regression tree after training",
                     value=p.get("show_tree", False),
-                    help="Display the trained tree structure using matplotlib."
+                    help="Display the trained tree structure."
                 )
                 if p["show_tree"]:
                     p["tree_max_depth_vis"] = st.slider(
@@ -836,38 +841,47 @@ def ui_metrics_display(state: AppState) -> AppState:
     st.divider()
 
     export_data = {}
+    export_data = {"row_index": state.df["row_index"]}
+    export_data[state.target_col] = state.df[state.target_col]
+    global_params = state.params.get("GLOBAL", DEFAULT_PARAMS["GLOBAL"])
+    split_ratio = global_params.get("train_split_ratio", DEFAULT_PARAMS["GLOBAL"]["train_split_ratio"])
+    split_index = int(len(state.df) * split_ratio)
+    export_data["data_split"] = ["Train" if i < split_index else "Test" for i in range(len(state.df))]
+
+
     for method, res_list in state.results.items():
         for i, res in enumerate(res_list if isinstance(res_list, list) else [res_list]):
             method_label = f"{method}_{i+1}" if isinstance(res_list, list) and len(res_list) > 1 else method
-            if "y_test_pred" in res:
-                export_data[f"{method_label}_pred"] = res["y_test_pred"]
-            if "y_test_true" in res:
-                export_data["actual"] = res["y_test_true"]
 
+            # Combine train + test predictions for full length
+            if "y_train_pred" in res and "y_test_pred" in res:
+                y_pred_full = pd.concat([res["y_train_pred"], res["y_test_pred"]])
+                export_data[f"{method_label}_pred"] = y_pred_full.reindex(state.df.index).reset_index(drop=True)
 
-    if export_data:
-        export_df = pd.DataFrame(export_data)
+    export_df = pd.DataFrame(export_data)
+    base_name = getattr(state, "last_uploaded_filename", "forecast_results")
+    base_stem = base_name.rsplit(".", 1)[0]  # remove extension if present
 
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            export_df.to_excel(writer, index=False)
-        excel_bytes = buffer.getvalue()
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        export_df.to_excel(writer, index=False)
+    excel_bytes = buffer.getvalue()
 
-        csv_bytes = export_df.to_csv(index=False).encode("utf-8")
+    csv_bytes = export_df.to_csv(index=False).encode("utf-8")
 
-        st.download_button(
-            "📘 Export forecasted values as Excel (.xlsx)",
-            data=excel_bytes,
-            file_name="forecast_results.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+    st.download_button(
+        "📘 Export forecasted values as Excel (.xlsx)",
+        data=excel_bytes,
+        file_name=f"{base_stem}_forecast_results.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
-        st.download_button(
-            "📄 Export  forecasted values as CSV (.csv)",
-            data=csv_bytes,
-            file_name="forecast_results.csv",
-            mime="text/csv",
-        )
+    st.download_button(
+        "📄 Export forecasted values as CSV (.csv)",
+        data=csv_bytes,
+        file_name=f"{base_stem}_forecast_results.csv",
+        mime="text/csv",
+    )
 
     fig, ax = plt.subplots(figsize=(14, 6))
 
