@@ -51,7 +51,6 @@ DEFAULT_PARAMS = {
         "min_samples_split": 2,
         "min_samples_leaf": 1,
         "n_lags": 3,
-        "tree_max_depth_vis": 3,
     },
     "Linear Regression": {
         "include_intercept": True,
@@ -735,20 +734,49 @@ def ui_param_selection(state: AppState) -> AppState:
                     value=p.get("show_tree", False),
                     help="Display the trained tree structure."
                 )
-                if p["show_tree"]:
+                if p["show_tree"] and int(p.get("max_depth", 5)) > 1:
                     p["tree_max_depth_vis"] = st.slider(
                         "Tree depth to display",
                         min_value=1,
                         max_value=int(p.get("max_depth", 5)),
                         value=min(3, int(p.get("max_depth", 5))),
                         step=1,
-                        help="Maximum depth of the displayed tree (for readability)."
+                        help="Limits how many levels of the tree are shown in the plot (does not affect training).",
                     )
+                else:
+                    p["tree_max_depth_vis"] = 1
 
             state.params[method] = p
 
+            # --- Individual model training button ---
             if st.button(f"Train {method}", key=f"train_btn_{method}"):
+                with st.status(f"⏳ Training {method} in progress...", expanded=True) as status:
+                    try:
+                        res = run_model(
+                            method_name=method,
+                            df=state.df,
+                            target_col=state.target_col,
+                            params=p,
+                            feature_cols=state.feature_cols,
+                            split_ratio=split_ratio,
+                        )
+                        if res:
+                            state.results.setdefault(method, []).append(res)
+                            status.update(label=f"✅ {method} training complete!", state="complete")
+                            st.success(f"{method} trained successfully.")
+                    except Exception as e:
+                        status.update(label=f"❌ Error while training {method}", state="error")
+                        st.error(f"Error in {method}: {e}")
+
+
+    st.markdown("---")
+    # --- Batch training button ---
+    if st.button("💡 Compute all selected models", key="btn_all_models"):
+        with st.status("⏳ Training all selected models...", expanded=True) as status:
+            for method in state.methods_selected:
+                status.update(label=f"Training {method}...")
                 try:
+                    p = state.params.get(method, DEFAULT_PARAMS.get(method, {}))
                     res = run_model(
                         method_name=method,
                         df=state.df,
@@ -758,30 +786,13 @@ def ui_param_selection(state: AppState) -> AppState:
                         split_ratio=split_ratio,
                     )
                     if res:
-                        state.results.setdefault(method, []).append(res)  
-                    st.success(f"{method} trained successfully.")
+                        state.results.setdefault(method, []).append(res)
                 except Exception as e:
                     st.error(f"Error in {method}: {e}")
 
-    st.markdown("---")
-    if st.button("💡 Compute all selected models", key="btn_all_models"):
-        st.info("Starting batch training for all selected models...")
-        for method in state.methods_selected:
-            try:
-                p = state.params.get(method, DEFAULT_PARAMS.get(method, {}))
-                res = run_model(
-                    method_name=method,
-                    df=state.df,
-                    target_col=state.target_col,
-                    params=p,
-                    feature_cols=state.feature_cols,
-                    split_ratio=split_ratio,
-                )
-                if res:
-                    state.results.setdefault(method, []).append(res)  
-            except Exception as e:
-                st.error(f"Error in {method}: {e}")
-        st.success("✅ Finished training all selected models.")
+            status.update(label="✅ Finished training all selected models!", state="complete")
+            st.success("✅ All models trained successfully.")
+
 
     st.divider()
     return state
